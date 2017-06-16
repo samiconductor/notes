@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory() as tmpdirname:
         '-c', 'IndexTaggedNotes',
         '-c', 'ExportNoteTags {}'.format(str(tag_index_path)),
         '-c', 'ExportNotes {}'.format(str(notes_path)),
-        '+qall'], stderr=subprocess.DEVNULL)
+        '+qall'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # Tag landing and individual pages
     with tag_index_path.open() as tags_file:
