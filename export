@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+
+import argparse
+import datetime
+import os
+import re
+import tempfile
+import shutil
+import subprocess
+
+from os.path import relpath, realpath
+from pathlib import Path
+from string import Template
+
+parser = argparse.ArgumentParser(description='Export notes to html')
+parser.add_argument('destination', help='destination to rsync exported notes to')
+args = parser.parse_args()
+
+with tempfile.TemporaryDirectory() as tmpdirname:
+    build_path = Path(realpath(__file__)).parent
+    static_path = build_path / 'static'
+    base_path = Path(tmpdirname)
+    paths = [base_path / dir for dir in ('notes', 'tags', 'todo', 'content', 'publish')]
+    notes_path, tags_path, todo_path, content_path, publish_path = paths
+    tag_index_path = base_path / 'tags.index'
+    page_paths = [page_path / 'index.md' for page_path in (base_path, notes_path, tags_path, todo_path)]
+    home_page_path, note_page_path, tag_page_path, todo_page_path = page_paths
+    tag_counts = {}
+    content_ext = 'html'
+    content_template = Template((build_path /'content.template.html').read_text())
+    year = datetime.datetime.now().year
+
+    for path in paths:
+        path.mkdir()
+
+    subprocess.run(['vim',
+        '-c', 'IndexTaggedNotes',
+        '-c', 'ExportNoteTags {}'.format(str(tag_index_path)),
+        '-c', 'ExportNotes {}'.format(str(notes_path)),
+        '+qall'], stderr=subprocess.DEVNULL)
+
+    # Tag landing and individual pages
+    with tag_index_path.open() as tags_file:
+
+        with tag_page_path.open('w') as tag_page_file:
+            tag_page_file.write('# Tags\n\n')
+
+            for taglist in tags_file:
+                tag, *note_names = taglist.split('\t')
+                tag_counts[tag] = len(note_names)
+                tag_path = tags_path / '@{}.md'.format(tag)
+
+                with tag_path.open('w') as tag_file:
+                    tag_file.write('# {}\n\n'.format(tag))
+                    tag_file.writelines('- {}\n'.format(note_name) for note_name in note_names)
+
+                tag_page_file.write('## [{0}](@{0}.{1})\n\n'.format(tag, content_ext))
+                tag_page_file.writelines('- {}\n'.format(note_name) for note_name in note_names)
+
+    # Notes landing page
+    with note_page_path.open('w') as note_page_file:
+        note_page_file.write('# Notes\n\n')
+        note_page_file.writelines('- {}\n'.format(note_name)
+                for note_name in sorted(note_path.stem for note_path in notes_path.glob('*.md'))
+                if note_name != note_page_path.stem)
+
+    def normalized_tag_count(count):
+        return (count - min(tag_counts.values())) / (max(tag_counts.values()) - min(tag_counts.values()))
+
+    todo_note_names = sorted(note_path.stem for note_path in notes_path.glob('*.md')
+            if re.search('TODO', note_path.read_text()))
+
+    # Todo landing page
+    with todo_page_path.open('w') as todo_page_file:
+
+        todo_page_file.write('# Todo\n\n')
+
+        if todo_note_names:
+            todo_page_file.writelines('- {}\n'.format(note_name) for note_name in todo_note_names)
+        else:
+            todo_page_file.write('Everything is DONE!')
+
+    # Home page
+    with home_page_path.open('w') as home_page_file:
+        rel_tags_dir, rel_todo_dir, rel_notes_dir = [
+                relpath(str(page_path), str(home_page_path.parent))
+                for page_path in (tags_path, todo_path, notes_path)]
+
+        home_page_file.write('## [Tags]({}/)\n\n'.format(rel_tags_dir))
+        home_page_file.writelines('<a href="{0}/{2}.{1}" style="font-size: {3}em">{2}</a>\n'.format(
+            rel_tags_dir, content_ext, '@{}'.format(tag), round(normalized_tag_count(count), 2) + 1)
+                for tag, count in sorted(tag_counts.items()))
+
+        if todo_note_names:
+            home_page_file.write('\n## [Todo]({}/)\n\n'.format(rel_todo_dir))
+            home_page_file.writelines('- {}\n'.format(note_name) for note_name in todo_note_names)
+
+        home_page_file.write('\n## [Notes]({}/)\n\n'.format(rel_notes_dir))
+        home_page_file.writelines('- {}\n'.format(note_name)
+                for note_name in sorted(note_path.stem for note_path in notes_path.glob('*.md'))
+                if note_name != note_page_path.stem)
+
+    note_names_pattern = r'(?P<note>{})'.format('|'.join(re.escape(note_name)
+        for note_name in sorted(note_path.stem for note_path in notes_path.glob('*.md'))))
+
+    # Replace all note names with links to note
+    for page_path in base_path.rglob('*.md'):
+        rel_notes_dir = relpath(str(notes_path), str(page_path.parent))
+
+        with page_path.open() as page_file:
+            content = page_file.readlines()
+
+        with page_path.open('w') as page_file:
+            heading = content[0]
+            body = content[1:]
+            note_link_repl = r'[\g<note>]({}/\g<note>.{})'.format(rel_notes_dir, content_ext)
+
+            page_file.write(heading)
+            page_file.writelines(re.sub(note_names_pattern, note_link_repl, line) for line in body)
+
+    tags_pattern = r'(?P<tag>{})'.format('|'.join(re.escape('@{}'.format(tag))
+        for tag in sorted(tag_counts.keys())))
+
+    def brace_balance(text):
+        matches = re.findall(r'[\[\]\(\)]', text)
+        opening = sum(1 for match in matches if re.match(r'[\[\(]', match))
+        closing = sum(1 for match in matches if re.match(r'[\]\)]', match))
+
+        return opening - closing
+
+    # Replace all tags with links to tags
+    for note_path in notes_path.rglob('*.md'):
+        rel_tags_dir = relpath(str(tags_path), str(note_path.parent))
+
+        with note_path.open() as note_file:
+            content = note_file.readlines()
+
+        with note_path.open('w') as note_file:
+            tag_link_repl = r'[\g<tag>]({}/\g<tag>.{})'.format(rel_tags_dir, content_ext)
+
+            for line in content:
+                tag_split = re.split(tags_pattern, line)
+                tag_indeces = [index for index, piece in enumerate(tag_split)
+                        if re.match(tags_pattern, piece)]
+
+                for index in tag_indeces:
+                    balance_before = brace_balance(''.join(tag_split[:index]))
+                    balance_after = brace_balance(''.join(tag_split[index+1:]))
+
+                    if balance_before <= 0 and balance_after >= 0:
+                        tag_split.insert(index, re.sub(tags_pattern, tag_link_repl, tag_split.pop(index)))
+
+                note_file.writelines(tag_split)
+
+    # Replace all TODOs and DONEs with spans for styling
+    for note_path in notes_path.rglob('*.md'):
+
+        def todo_repl(match):
+            return '<span class="todo todo-{}">{}</span>'.format(match.group(0).lower(), match.group(0))
+
+        note_path.write_text(re.sub(r'(TODO|DONE)', todo_repl, note_path.read_text()))
+
+    # Convert all markdown files to html
+    for page_path in base_path.rglob('*.md'):
+        content_page_path = content_path.joinpath(page_path.relative_to(base_path)).with_suffix('.html')
+
+        if not content_page_path.parent.exists():
+            content_page_path.parent.mkdir(parents=True)
+
+        with content_page_path.open('w') as contentpagefile:
+            subprocess.call(['markdown', str(page_path)], stdout=contentpagefile)
+
+    # Run all content files through content html wrapper template
+    for page_path in content_path.rglob('*.html'):
+        publish_page_path = publish_path.joinpath(page_path.relative_to(content_path))
+        base_dir = relpath(str(content_path), str(page_path.parent))
+        title = page_path.stem
+
+        if title == 'index':
+            page_dir_path = page_path.relative_to(content_path).parent
+
+            if not len(page_dir_path.parts):
+                title = 'Home'
+            else:
+                title = page_dir_path.name.capitalize()
+
+        if not publish_page_path.parent.exists():
+            publish_page_path.parent.mkdir(parents=True)
+
+        page = content_template.substitute(
+                title=title,
+                base=base_dir,
+                content=page_path.read_text(),
+                year=year)
+
+        publish_page_path.write_text(page)
+
+    # Copy static assets into publish path
+    for static_asset_path in static_path.rglob('*'):
+        if static_asset_path.is_dir():
+            continue
+
+        publish_asset_path = publish_path.joinpath(static_asset_path.relative_to(static_path))
+
+        if not publish_asset_path.parent.exists():
+            publish_asset_path.parent.mkdir(parents=True)
+
+        publish_asset_path.write_bytes(static_asset_path.read_bytes())
+
+    # Rsync publish path to destination
+    subprocess.run(['rsync', '--recursive', '--delete', str(publish_path) + os.sep, args.destination])

@@ -1,0 +1,89 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: sans-serif;
+}
+
+h1 {
+  font-size: 1.6em;
+}
+
+h2 {
+  font-size: 1.4em;
+}
+
+h3 {
+  font-size: 1.2em;
+}
+
+p {
+  word-break: break-word;
+}
+
+a {
+  text-decoration: none;
+}
+
+.site-header {
+  text-align: center;
+  line-height: 50px;
+  background-color: black;
+}
+
+.site-header a {
+  color: white;
+}
+
+.site-header nav a {
+  margin-right: 15px;
+}
+
+.site-header nav a:last-of-type {
+  margin-right: 0;
+}
+
+.content {
+  max-width: 1200px;
+  padding: 0 15px;
+  margin: 0 auto;
+}
+
+.content-wrap {
+  min-height: 100%;
+  margin-bottom: -50px;
+}
+
+.content-wrap:after {
+  content: "";
+  display: block;
+}
+
+.site-footer, .content-wrap:after {
+  height: 50px;
+}
+
+.site-footer {
+  text-align: center;
+  line-height: 50px;
+  color: white;
+  background: black;
+}
+
+.todo {
+  font-weight: bold;
+}
+
+.todo-todo {
+  color: #DC322F;
+}
+
+.todo-done {
+  color: #2AA198;
+}
