@@ -34,6 +34,10 @@ with tempfile.TemporaryDirectory() as tmpdirname:
         path.mkdir()
 
     subprocess.run(['vim',
+        '-c', 'execute silent "!rm ".g:notes_tagsindex',
+        '+qall'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    subprocess.run(['vim',
         '-c', 'IndexTaggedNotes',
         '-c', 'ExportNoteTags {}'.format(str(tag_index_path)),
         '-c', 'ExportNotes {}'.format(str(notes_path)),
